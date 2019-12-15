@@ -2,11 +2,11 @@
 import time
 import io
 import sys
-import datetime
 import yaml
 import logging
 import smtplib
 import traceback
+from datetime import datetime
 
 from garminexport.garminclient import GarminClient
 from stravalib.client import Client
@@ -19,43 +19,32 @@ from email.mime.text import MIMEText
 logger = logging.getLogger('garmin_sync')
 logger.setLevel(logging.DEBUG)
 
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-ch = logging.StreamHandler(sys.stderr)
-ch.setLevel(logging.INFO)
-ch.setFormatter(formatter)
-logger.addHandler(ch)
-
-fh = logging.FileHandler(filename='sync.log')
-fh.setLevel(logging.DEBUG)
-fh.setFormatter(formatter)
-logger.addHandler(fh)
-
-logging.getLogger('garminexport.garminclient').addHandler(fh)
-logging.getLogger('garminexport.garminclient').setLevel(logging.DEBUG)
-logging.getLogger('stravalib.client').addHandler(fh)
-logging.getLogger('stravalib.client').setLevel(logging.DEBUG)
-logging.getLogger('requests_oauthlib').addHandler(fh)
-logging.getLogger('requests_oauthlib').setLevel(logging.DEBUG)
-logging.getLogger('oauthlib.oauth2').addHandler(fh)
-logging.getLogger('oauthlib.oauth2').setLevel(logging.DEBUG)
-
-
-def send_email(subject, message):
+def get_config():
     with open('config.yml') as c:
         config = yaml.load(c, Loader=yaml.FullLoader)
 
-    config = config['email']
+    return config
+
+
+def write_config(config):
+    with open('config.yml', 'w') as outfile:
+        yaml.dump(config, outfile, default_flow_style=False)
+
+
+def send_email(subject, message):
+
+    config = get_config()['email']
 
     s = smtplib.SMTP(host=config['host'], port=config['port'])
     s.starttls()
     s.login(config['email'], config['password'])
 
-    msg = MIMEMultipart() 
-    msg['From'] = config['email'] 
+    msg = MIMEMultipart()
+    msg['From'] = config['email']
     msg['To'] = config['to']
     msg['Subject'] = subject
-    
+
     msg.attach(MIMEText(message, 'plain'))
     s.send_message(msg)
 
@@ -71,6 +60,17 @@ def nokia_refresh_cb(token):
     logger.debug('refresh_token = {}'.format(refresh_token))
     logger.debug('token_type = {}'.format(token_type))
     logger.debug('expires_in = {}'.format(expires_in))
+
+    config = get_config()
+
+    ts = datetime.timestamp(datetime.now())
+
+    config['nokia']['access_token'] = access_token
+    config['nokia']['refresh_token'] = refresh_token
+    config['nokia']['token_type'] = token_type
+    config['nokia']['token_expiry'] = ts + expires_in
+
+    write_config(config)
 
 
 class Strava:
@@ -107,14 +107,9 @@ class Strava:
 
 
 def strava_sync():
-    with open('config.yml') as c:
-        config = yaml.load(c, Loader=yaml.FullLoader)
+    config = get_config()
 
     last_sync = config['main']['last_sync']
-
-    #now = datetime.datetime.now(datetime.timezone.utc)
-    #now -= datetime.timedelta(days=5)
-    #last_sync = now.timestamp()
 
     # Do garmin connect part
 
@@ -136,12 +131,14 @@ def strava_sync():
 
         logger.info('Uploading {} activities to STRAVA'.format(len(fit_files)))
 
-        config['main']['last_sync'] = max(dates).timestamp()
-
         # Now do Strava Part
 
         strava = Strava(config['strava'])
         strava_token = strava.connect()
+
+        # Write out config for token
+        config['strava'] = strava_token
+        write_config(config)
 
         upload_types = config['strava']['upload_types']
 
@@ -154,23 +151,22 @@ def strava_sync():
                     loader.wait()
                 except ActivityUploadFailed as e:
                     logger.critical('Failed to upload activity \"{}\" {}'
-                        .format(n, str(e)))
+                                    .format(n, str(e)))
                 else:
                     logger.info('Uploaded activity \"{}\"'.format(n))
 
             else:
-                logger.info('Skipped activity type \"{}\" for activity {}'.format(t, n))
+                logger.info('Skipped activity type \"{}\" for activity {}'
+                            .format(t, n))
 
-        config['strava'] = strava_token
+        # Now store last timestamp
 
-    # Now write out YAML file
+        config['main']['last_sync'] = max(dates).timestamp()
+        write_config(config)
 
-    with open('config.yml', 'w') as outfile:
-        yaml.dump(config, outfile, default_flow_style=False)
 
 def nokia_sync(force=False):
-    with open('config.yml') as c:
-        config = yaml.load(c, Loader=yaml.FullLoader)
+    config = get_config()
 
     n = config['nokia']
 
@@ -184,90 +180,107 @@ def nokia_sync(force=False):
 
     nokia_client = NokiaApi(creds, refresh_cb=nokia_refresh_cb)
 
-    measure = nokia_client.get_measures(limit=1)[0]
+    measures = nokia_client.get_measures()
+    measure = measures[0]
+    logger.info('Recieved {} measurements'.format(len(measures)))
 
-    creds = nokia_client.get_credentials()
+    # Now check if we need to update
+    last_update = max([m.date.timestamp for m in measures])
+    if (config['nokia']['last_update'] <= last_update) and not force:
+        logger.info('No new weight updates')
+        return measures
 
-    config['nokia']['access_token'] = creds.access_token
-    config['nokia']['token_expiry'] = creds.token_expiry
-    config['nokia']['token_type'] = creds.token_type
-    config['nokia']['refresh_token'] = creds.refresh_token
-    config['nokia']['user_id'] = creds.user_id
-    config['nokia']['client_id'] = creds.client_id
-    config['nokia']['consumer_secret'] = creds.consumer_secret
+    msg = ''
 
+    fit = FitEncoder_Weight()
+    fit.write_file_info()
+    fit.write_file_creator()
+    fit.write_device_info(datetime.timestamp(datetime.now()))
+
+    for measure in measures:
+        if (config['nokia']['last_update'] < measure.date.timestamp) or force:
+
+            if measure.weight is not None:
+                msg += 'New measurement at {} ({})\n'.format(
+                    str(measure.date.datetime),
+                    measure.date.humanize())
+
+                msg += 'New weight = {} kg\n'.format(measure.weight)
+                msg += 'New fat ratio= {} %\n'.format(measure.fat_ratio)
+                msg += 'New hydration = {} %\n'.format(measure.hydration)
+                msg += 'New bone mass = {} kg\n'.format(measure.bone_mass)
+                msg += 'New muscle mass = {} kg\n'.format(measure.muscle_mass)
+
+                for m in msg.splitlines():
+                    logger.info(m)
+
+                # Sync Garmin
+
+                logger.info('Syncing weight of {} with GARMIN.'
+                            .format(measure.weight))
+
+                fit.write_weight_scale(timestamp=measure.date.timestamp,
+                                       weight=measure.weight,
+                                       percent_fat=measure.fat_ratio,
+                                       percent_hydration=measure.hydration,
+                                       bone_mass=measure.bone_mass,
+                                       muscle_mass=measure.muscle_mass)
+        else:
+            logger.info("Weight of {} already synced.".format(measure.weight))
+
+    fit.finish()
+
+    with GarminClient(config['garmin']['username'],
+                      config['garmin']['password']) as client:
+        client.upload_activity(io.BytesIO(fit.getvalue()), 'fit')
+
+    # Sync Strava
+
+    measure = measures[0]
     if (config['nokia']['last_update'] != measure.date.timestamp) or force:
-        msg = ''
-
-        msg += 'New measurement at {} ({})\n\n'.format(
-                str(measure.date.datetime),
-                measure.date.humanize())
-
-        msg += 'New weight = {} kg\n'.format(measure.weight)
-        msg += 'New fat ratio= {} %\n'.format(measure.fat_ratio)
-        msg += 'New hydration = {} %\n'.format(measure.hydration)
-        msg += 'New bone mass = {} kg\n'.format(measure.bone_mass)
-        msg += 'New muscle mass = {} kg\n'.format(measure.muscle_mass)
-
-        for m in msg.splitlines():
-            logger.info(m)
-
-        # Sync Strava
-
         logger.info('Syncing weight of {} with STRAVA.'.format(measure.weight))
         strava = Strava(config['strava'])
         strava_token = strava.connect()
         config['strava'] = strava_token
         strava.client.update_athlete(weight=measure.weight)
 
-        # Sync Garmin
+        msg += 'Synced weight of {} with Strava\n'.format(measure.weight)
 
-        logger.info('Syncing weight of {} with GARMIN.'.format(measure.weight))
+    config = get_config()
+    config['nokia']['last_update'] = max([m.date.timestamp for m in measures])
+    write_config(config)
 
-        fit = FitEncoder_Weight()
-        fit.write_file_info()
-        fit.write_file_creator()
-        
-        fit.write_device_info(timestamp=measure.date.timestamp)
-        fit.write_weight_scale(timestamp=measure.date.timestamp,
-                               weight=measure.weight,
-                               percent_fat=measure.fat_ratio,
-                               percent_hydration=measure.hydration,
-                               bone_mass=measure.bone_mass,
-                               muscle_mass=measure.muscle_mass)
-        fit.finish()
+    send_email('New Weight Sync', msg)
 
-        with GarminClient(config['garmin']['username'],
-                          config['garmin']['password']) as client:
-            client.upload_activity(io.BytesIO(fit.getvalue()), 'fit')
+    return measures
 
-        config['nokia']['last_update'] = measure.date.timestamp
 
-        send_email('New Weight Reading', msg)
-
-    else:
-        logger.info("Weight of {} already synced.".format(measure.weight))
-
-    with open('config.yml', 'w') as outfile:
-        yaml.dump(config, outfile, default_flow_style=False)
-
-    return measure
-
-if __name__ == '__main__':
+def main():
+    logging.basicConfig(
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        level=logging.INFO)
     try:
         logger.info("Starting strava_sync()")
         strava_sync()
-    except:
+    except Exception:
         logger.error("Error processing strava_sync()")
         exc = sys.exc_info()
-        send_email('Error processing strava_sync()', 
-                ''.join(traceback.format_exception(*exc)))
+        send_email('Error processing strava_sync()',
+                   ''.join(traceback.format_exception(*exc)))
+        print(''.join(traceback.format_exception(*exc)),
+              file=sys.stderr)
 
     try:
         logger.info("Starting nokia_sync()")
         nokia_sync()
-    except:
+    except Exception:
         logger.error("Error processing nokia_sync()")
         exc = sys.exc_info()
         send_email('Error Processing nokia_sync()',
-                ''.join(traceback.format_exception(*exc)))
+                   ''.join(traceback.format_exception(*exc)))
+        print(''.join(traceback.format_exception(*exc)),
+              file=sys.stderr)
+
+
+if __name__ == '__main__':
+    main()
