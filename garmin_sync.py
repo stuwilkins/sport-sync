@@ -8,6 +8,7 @@ import smtplib
 import traceback
 from datetime import datetime
 
+from statistics import mean
 from garminexport.garminclient import GarminClient
 from stravalib.client import Client
 from stravalib.exc import ActivityUploadFailed
@@ -169,7 +170,6 @@ def nokia_sync(force=False):
     config = get_config()
 
     n = config['nokia']
-
     creds = NokiaCredentials(n['access_token'],
                              n['token_expiry'],
                              n['token_type'],
@@ -182,11 +182,16 @@ def nokia_sync(force=False):
 
     measures = nokia_client.get_measures()
     measure = measures[0]
+
     logger.info('Recieved {} measurements'.format(len(measures)))
 
     # Now check if we need to update
     last_update = max([m.date.timestamp for m in measures])
-    if (config['nokia']['last_update'] <= last_update) and not force:
+
+    logger.info('Last measurement at {}'.format(last_update))
+    logger.info('Last update at {}'.format(config['nokia']['last_update']))
+
+    if (config['nokia']['last_update'] >= last_update) and not force:
         logger.info('No new weight updates')
         return measures
 
@@ -201,6 +206,8 @@ def nokia_sync(force=False):
         if (config['nokia']['last_update'] < measure.date.timestamp) or force:
 
             if measure.weight is not None:
+                bmi = measure.weight / config['nokia']['height']**2
+
                 msg += 'New measurement at {} ({})\n'.format(
                     str(measure.date.datetime),
                     measure.date.humanize())
@@ -210,6 +217,7 @@ def nokia_sync(force=False):
                 msg += 'New hydration = {} %\n'.format(measure.hydration)
                 msg += 'New bone mass = {} kg\n'.format(measure.bone_mass)
                 msg += 'New muscle mass = {} kg\n'.format(measure.muscle_mass)
+                msg += 'Calculated BMI = {} kg.m^-2\n'.format(bmi)
 
                 for m in msg.splitlines():
                     logger.info(m)
@@ -224,9 +232,8 @@ def nokia_sync(force=False):
                                        percent_fat=measure.fat_ratio,
                                        percent_hydration=measure.hydration,
                                        bone_mass=measure.bone_mass,
-                                       muscle_mass=measure.muscle_mass)
-        else:
-            logger.info("Weight of {} already synced.".format(measure.weight))
+                                       muscle_mass=measure.muscle_mass,
+                                       bmi=bmi)
 
     fit.finish()
 
@@ -237,12 +244,20 @@ def nokia_sync(force=False):
     # Sync Strava
 
     measure = measures[0]
+    ts = datetime.timestamp(datetime.now())
+    ts -= (config['nokia']['weight_int'] * 86400)
+    weight = [m.weight for m in measures if m.date.timestamp >= ts]
+
+    logger.info("Averaging {} weight measurements".format(len(weight)))
+
+    weight = mean(weight)
+
     if (config['nokia']['last_update'] != measure.date.timestamp) or force:
         logger.info('Syncing weight of {} with STRAVA.'.format(measure.weight))
         strava = Strava(config['strava'])
         strava_token = strava.connect()
         config['strava'] = strava_token
-        strava.client.update_athlete(weight=measure.weight)
+        strava.client.update_athlete(weight=weight)
 
         msg += 'Synced weight of {} with Strava\n'.format(measure.weight)
 
