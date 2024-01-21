@@ -1,0 +1,3 @@
+stravalib
+garminexport[impersonate_browser]
+withings_api
