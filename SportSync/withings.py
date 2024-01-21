@@ -93,9 +93,10 @@ class WithingsData:
         )
         groups = query_measure_groups(meas_result)
         measure = groups[-1].measures[-1]
+        timestamp = groups[-1].date.int_timestamp
         val = float(measure.value * pow(10, measure.unit))
 
-        return val
+        return tuple((val, timestamp))
 
 
 if __name__ == "__main__":
@@ -109,3 +110,7 @@ if __name__ == "__main__":
     withings.authenticate()
 
     print(withings.get_latest_measure(MeasureType.WEIGHT, arrow.utcnow().shift(days=-7)))
+    print(withings.get_latest_measure(MeasureType.FAT_RATIO, arrow.utcnow().shift(days=-7)))
+    print(withings.get_latest_measure(MeasureType.HYDRATION, arrow.utcnow().shift(days=-7)))
+    print(withings.get_latest_measure(MeasureType.BONE_MASS, arrow.utcnow().shift(days=-7)))
+    print(withings.get_latest_measure(MeasureType.MUSCLE_MASS, arrow.utcnow().shift(days=-7)))
