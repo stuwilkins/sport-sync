@@ -6,14 +6,19 @@ import arrow
 import datetime
 from typing_extensions import Final
 from withings_api import AuthScope, WithingsApi, WithingsAuth
-from withings_api.common import CredentialsType, MeasureType, query_measure_groups, AuthFailedException
+from withings_api.common import (
+    CredentialsType,
+    MeasureType,
+    query_measure_groups,
+    AuthFailedException,
+)
 
 
 DateType = Union[arrow.Arrow, datetime.date, datetime.datetime, int, str]
 
 
 class WithingsData:
-    def __init__(self, credentials_file='.credentials'):
+    def __init__(self, credentials_file=".credentials"):
         self.credentials_file = credentials_file
         self.credentials = None
         self.api = None
@@ -80,17 +85,10 @@ class WithingsData:
 
         self.api = WithingsApi(self.credentials, refresh_cb=self.save_credentials)
 
-    def get_latest_measure(
-        self,
-        meastype: MeasureType,
-        lastupdate: DateType
-    ):
+    def get_latest_measure(self, meastype: MeasureType, lastupdate: DateType):
         """Get measures from API"""
         meas_result = self.api.measure_get_meas(
-            meastype=meastype,
-            lastupdate=lastupdate,
-            startdate=None,
-            enddate=None
+            meastype=meastype, lastupdate=lastupdate, startdate=None, enddate=None
         )
         groups = query_measure_groups(meas_result)
 
@@ -108,7 +106,7 @@ class WithingsData:
 
 
 if __name__ == "__main__":
-    withings = WithingsData(credentials_file='.credentials')
+    withings = WithingsData(credentials_file=".credentials")
 
     try:
         withings.load_credentials()
@@ -117,8 +115,26 @@ if __name__ == "__main__":
 
     withings.authenticate()
 
-    print(withings.get_latest_measure(MeasureType.WEIGHT, arrow.utcnow().shift(days=-7)))
-    print(withings.get_latest_measure(MeasureType.FAT_RATIO, arrow.utcnow().shift(days=-7)))
-    print(withings.get_latest_measure(MeasureType.HYDRATION, arrow.utcnow().shift(days=-7)))
-    print(withings.get_latest_measure(MeasureType.BONE_MASS, arrow.utcnow().shift(days=-7)))
-    print(withings.get_latest_measure(MeasureType.MUSCLE_MASS, arrow.utcnow().shift(days=-7)))
+    print(
+        withings.get_latest_measure(MeasureType.WEIGHT, arrow.utcnow().shift(days=-7))
+    )
+    print(
+        withings.get_latest_measure(
+            MeasureType.FAT_RATIO, arrow.utcnow().shift(days=-7)
+        )
+    )
+    print(
+        withings.get_latest_measure(
+            MeasureType.HYDRATION, arrow.utcnow().shift(days=-7)
+        )
+    )
+    print(
+        withings.get_latest_measure(
+            MeasureType.BONE_MASS, arrow.utcnow().shift(days=-7)
+        )
+    )
+    print(
+        withings.get_latest_measure(
+            MeasureType.MUSCLE_MASS, arrow.utcnow().shift(days=-7)
+        )
+    )
