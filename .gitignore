@@ -1,4 +1,5 @@
 config.yml
+**/.credentials
 *.swp
 
 # Byte-compiled / optimized / DLL files
