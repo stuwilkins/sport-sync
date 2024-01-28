@@ -1,3 +1,4 @@
-stravalib
+arrow
 garminexport[impersonate_browser]
-withings_api
+requests-oauthlib
+stravalib
