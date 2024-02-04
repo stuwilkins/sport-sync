@@ -2,6 +2,7 @@
 """
 
 import io
+import os
 from setuptools import setup, find_packages
 import pathlib
 
@@ -71,11 +72,11 @@ setup(
     install_requires=read_requirements("requirements.txt"),
     # Entry points. The following would provide a command called `sample` which
     # executes the function `main` from this package when invoked:
-    # entry_points={  # Optional
-    #     "console_scripts": [
-    #         "sample=sample:main",
-    #     ],
-    # },
+    entry_points={
+        "console_scripts": [
+            "sportsync=SportSync.console:sync",
+        ],
+    },
     # project_urls={  # Optional
     #     "Bug Reports": "https://github.com/pypa/sampleproject/issues",
     #     "Funding": "https://donate.pypi.org",

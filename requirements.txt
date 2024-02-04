@@ -1,4 +1,5 @@
 arrow
-garminexport[impersonate_browser]
+garth
+pyyaml
 requests-oauthlib
 stravalib

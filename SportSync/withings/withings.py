@@ -6,7 +6,6 @@ from oauthlib.oauth2 import WebApplicationClient
 from urllib import parse
 
 import json
-import pickle
 
 # import logging
 # import sys
@@ -265,20 +264,6 @@ STATUS_BAD_STATE = (524,)
 STATUS_TOO_MANY_REQUESTS = (601,)
 
 
-def save_credentials(credentials):
-    """Save credentials to a file."""
-    print("Saving")
-    with open(CREDENTIALS_FILE, "wb") as file_handle:
-        pickle.dump(credentials, file_handle)
-
-
-def load_credentials():
-    """Load credentials from a file."""
-    print("Using credentials saved in:", CREDENTIALS_FILE)
-    with open(CREDENTIALS_FILE, "rb") as file_handle:
-        return pickle.load(file_handle)
-
-
 def adjust_withings_token(response):
     """Restructures token from withings response"""
     try:
@@ -338,6 +323,7 @@ class WithingsMeasureScaleGroup:
     fat_mass: float = 0.0
     fat_free_mass: float = 0.0
     fat_ratio: float = 0.0
+    hydration: float = 0.0
 
     def __init__(self, group, timezone=None):
         self.from_measure_group(group, timezone)
@@ -360,6 +346,8 @@ class WithingsMeasureScaleGroup:
                 self.fat_free_mass = self._measure_to_val(measure)
             if measure["type"] == 6:
                 self.fat_ratio = self._measure_to_val(measure)
+            if measure["type"] == 77:
+                self.hydration = self._measure_to_val(measure)
 
     def _measure_to_val(self, measure):
         return float(measure["value"] * pow(10, measure["unit"]))
@@ -389,10 +377,12 @@ class WithingsMeasureHeightGroup:
 
 
 class WithingsAPI:
-    def __init__(self, credentials):
+    def __init__(self, credentials, save_callback=None, save_callback_args=None):
         self._session = None
         self._scope = ["user.metrics"]
         self._credentials = credentials
+        self._save_callback = save_callback
+        self._save_callback_args = save_callback_args
         self._token = {
             "access_token": self._credentials.access_token,
             "refresh_token": self._credentials.refresh_token,
@@ -448,7 +438,8 @@ class WithingsAPI:
             client_secret=self._credentials.client_secret,
             redirect_uri=self._credentials.redirect_uri,
         )
-        save_credentials(self._credentials)
+        if self._save_callback is not None:
+            self._save_callback(self._credentials, *self._save_callback_args)
 
     def get_auth_code(self):
         """Follow oauth2 flow and get authorization code"""
@@ -466,13 +457,13 @@ class WithingsAPI:
         )
         auth_code = redirected_uri_params["code"]
 
-        token = self._session.fetch_token(
+        self._session.fetch_token(
             "https://wbsapi.withings.net/v2/oauth2",
             include_client_id=True,
             action="requesttoken",
             code=auth_code,
-            client_id=client_id,
-            client_secret=client_secret,
+            client_id=self._client_id,
+            client_secret=self._client_secret,
         )
 
     def _get_data(self, url, data):
@@ -525,10 +516,3 @@ class WithingsAPI:
                 val.append(WithingsMeasureHeightGroup(group, response["timezone"]))
 
         return val
-
-
-if __name__ == "__main__":
-    api = WithingsAPI(load_credentials())
-    api.authenticate()
-    print(api.get_measures(arrow.utcnow().shift(days=-31)))
-    print(api.get_height(arrow.Arrow.fromtimestamp(0)))
